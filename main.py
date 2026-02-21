@@ -1,17 +1,61 @@
-import os
-import sys
 import asyncio
+import sys
 import json
 from dotenv import load_dotenv
 from agents.mcp.server import MCPServerStdio
-from lmstudio_http import call_lmstudio_http
+from lmstudio_http import call_lmstudio_http, call_lmstudio_no_tools
 
-# Load environment variables
 load_dotenv()
 
-LM_API_KEY = os.getenv("LM_API_KEY")
-LM_MODEL = os.getenv("LM_MODEL", "lmstudio-community/Meta-Llama-3-8B-Instruct")
-LM_API_URL = "http://localhost:1234/v1/chat/completions"
+
+def chunk_text(text, max_chars=6000):
+    """Split transcript into safe chunks for LM Studio."""
+    for i in range(0, len(text), max_chars):
+        yield text[i:i + max_chars]
+
+
+async def summarize_large_text(text):
+    """Summarize long transcripts safely using chunking."""
+    partial_summaries = []
+
+    # 1. Summarize each chunk
+    for chunk in chunk_text(text):
+        summary_request = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "user",
+                "content": (
+                    "Summarize the following part of a YouTube transcript. "
+                    "Do NOT repeat the text.\n\n" + chunk
+                ),
+            },
+        ]
+
+        response = await call_lmstudio_no_tools(summary_request)
+
+        if "choices" not in response:
+            raise RuntimeError("LM Studio returned an error during chunk summary.")
+
+        partial_summaries.append(response["choices"][0]["message"]["content"])
+
+    # 2. Summarize the summaries
+    final_request = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {
+            "role": "user",
+            "content": (
+                "Combine these partial summaries into one concise summary:\n\n"
+                + "\n\n".join(partial_summaries)
+            ),
+        },
+    ]
+
+    final_response = await call_lmstudio_no_tools(final_request)
+
+    if "choices" not in final_response:
+        raise RuntimeError("LM Studio returned an error during final summary.")
+
+    return final_response["choices"][0]["message"]["content"]
 
 
 async def run_chat_loop(mcp_server):
@@ -20,6 +64,7 @@ async def run_chat_loop(mcp_server):
     ]
 
     print("== Local LM Studio HTTP + MCP + Tool Calling ==")
+    print("Type 'exit' to quit.\n")
 
     while True:
         user = input("User: ").strip()
@@ -28,50 +73,57 @@ async def run_chat_loop(mcp_server):
 
         messages.append({"role": "user", "content": user})
 
-        # Send to LM Studio
+        # First LM Studio call (tools enabled)
         response = await call_lmstudio_http(messages)
         msg = response["choices"][0]["message"]
 
+        # -------------------------------
+        # TOOL CALL HANDLING
+        # -------------------------------
         if "tool_calls" in msg:
             for tool_call in msg["tool_calls"]:
                 name = tool_call["function"]["name"]
-
-                # arguments come in as a JSON STRING
                 raw_args = tool_call["function"]["arguments"]
                 args = json.loads(raw_args)
 
                 if name == "fetch_video_transcript":
-                    if "url" not in args:
-                        print("Tool call missing 'url' argument:", args)
-                        continue
-                    url = args["url"]
+                    url = args.get("url")
 
                     # Call MCP tool
-                    result = await mcp_server.call_tool("fetch_video_transcript", {"url": url})
+                    tool_result = await mcp_server.call_tool(
+                        "fetch_video_transcript",
+                        {"url": url}
+                    )
 
-                    # Extract the actual text from TextContent
-                    # tool_result.content is a list of TextContent objects
-                    result_text = result.content[0].text
+                    transcript_text = tool_result.content[0].text
 
-                    # Return tool result to LM Studio
+                    # Replace transcript with placeholder
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
-                        "content": result_text
+                        "content": "TRANSCRIPT_RECEIVED"
                     })
 
-            # Ask LM Studio to continue the conversation
-            response = await call_lmstudio_http(messages)
-            msg = response["choices"][0]["message"]
+                    # Summarize safely
+                    final_summary = await summarize_large_text(transcript_text)
 
-        # Normal assistant message
+                    print("\nAssistant:", final_summary, "\n")
+
+                    messages.append({
+                        "role": "assistant",
+                        "content": final_summary
+                    })
+
+                    continue
+
+        # -------------------------------
+        # NORMAL ASSISTANT MESSAGE
+        # -------------------------------
         messages.append(msg)
         print("\nAssistant:", msg["content"], "\n")
 
 
-
 async def main():
-    """Start MCP server and chat loop."""
     async with MCPServerStdio(
         name="YouTube MCP Server",
         params={
