@@ -10,6 +10,7 @@ LM_MODEL = os.getenv("LM_MODEL", "lmstudio-community/Meta-Llama-3-8B-Instruct")
 
 
 async def call_lmstudio_http(messages):
+    """Call LM Studio with tools enabled."""
     async with aiohttp.ClientSession() as session:
         async with session.post(
             LM_API_URL,
@@ -38,3 +39,16 @@ async def call_lmstudio_http(messages):
         ) as resp:
             return await resp.json()
 
+
+async def call_lmstudio_no_tools(messages):
+    """Call LM Studio WITHOUT tools (for summarization)."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            LM_API_URL,
+            headers={"Authorization": f"Bearer {LM_API_KEY}"},
+            json={
+                "model": LM_MODEL,
+                "messages": messages,
+            },
+        ) as resp:
+            return await resp.json()
