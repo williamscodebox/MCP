@@ -78,6 +78,9 @@ def fetch_instructions(prompt_name: str) -> str:
     Returns:
         str: Instructions for the given prompt
     """
+    if prompt_name != "write_blog_post" or prompt_name != "write_social_post" or prompt_name != "write_video_chapters" :
+        raise ValueError("Invalid Prompt")
+
     script_dir = os.path.dirname(__file__)
     prompt_path = os.path.join(script_dir, "prompts", f"{prompt_name}.md")
     with open(prompt_path, "r") as f:
