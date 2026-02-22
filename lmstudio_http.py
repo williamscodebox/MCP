@@ -32,6 +32,20 @@ async def call_lmstudio_http(messages):
                                 "required": ["url"]
                             }
                         }
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "fetch_instructions",
+                            "description": "Fetch instructions for a given prompt name from the prompts/ directory",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt_name": {"type": "string"}
+                                },
+                                "required": ["Prompt_name"]
+                            }
+                        }
                     }
                 ],
                 "tool_choice": "auto"
